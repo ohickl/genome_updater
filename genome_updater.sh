@@ -33,7 +33,8 @@ if [[ ! -z "${local_dir}" ]]; then
     # set local dir with absulute path and "file://"
     local_dir="file://$(cd "${local_dir}" && pwd)"
 fi
-ncbi_base_url=${ncbi_base_url:-ftp://ftp.ncbi.nlm.nih.gov/} #Alternative ftp://ftp.ncbi.nih.gov/
+# ncbi_base_url=${ncbi_base_url:-ftp://ftp.ncbi.nlm.nih.gov/} #Alternative ftp://ftp.ncbi.nih.gov/
+ncbi_base_url=${ncbi_base_url:-https://ftp.ncbi.nlm.nih.gov/}  ## ohickl: Changed to https since we can connect to ftp
 gtdb_base_url="https://data.gtdb.ecogenomic.org/releases/latest/"
 retries=${retries:-3}
 timeout=${timeout:-120}
@@ -48,8 +49,29 @@ alias sort="sort --field-separator=$'\t'"
 join_as_fields1="1.1,1.2,1.3,1.4,1.5,1.6,1.7,1.8,1.9,1.10,1.11,1.12,1.13,1.14,1.15,1.16,1.17,1.18,1.19,1.20,1.21,1.22,1.23,1.24,1.25,1.26,1.27,1.28,1.29,1.30,1.31,1.32,1.33,1.34,1.35,1.36,1.37,1.38"
 join_as_fields2="1.1,2.2,2.3,2.4,2.5,2.6,2.7,2.8,2.9,2.10,2.11,2.12,2.13,2.14,2.15,2.16,2.17,2.18,2.19,2.20,2.21,2.22,2.23,2.24,2.25,2.26,2.27,2.28,2.29,2.30,2.31,2.32,2.33,2.34,2.35,2.36,2.37,2.38"
 
-download_url() # parameter: ${1} url, ${2} output file/directory (omit/empty to STDOUT)
-{
+# download_url() # parameter: ${1} url, ${2} output file/directory (omit/empty to STDOUT)
+# {
+#     url="${1}"
+#     outfiledir="${2:-}"
+#     if [[ ! -z "${outfiledir}" ]]; then
+#         if [[ -d "${outfiledir}" ]]; then
+#             outfile="${outfiledir}/${1##*/}" # based on given output dir and file to download
+#         else
+#             outfile="${outfiledir}"
+#         fi
+#     else
+#         outfile="-" # STDOUT
+#     fi
+
+#     # Replace base url with local directory if provided
+#     if [[ ! -z "${local_dir}" ]]; then 
+#         url="${local_dir}/${url#*://*/}";
+#     fi
+#     downloader "${outfile}" "${url}"
+# }
+
+## ohickl: Adapt to http version
+download_url() { # parameter: ${1} url, ${2} output file/directory (omit/empty to STDOUT)
     url="${1}"
     outfiledir="${2:-}"
     if [[ ! -z "${outfiledir}" ]]; then
@@ -62,12 +84,14 @@ download_url() # parameter: ${1} url, ${2} output file/directory (omit/empty to 
         outfile="-" # STDOUT
     fi
 
-    # Replace base url with local directory if provided
+    # Replace base URL with local directory if provided
     if [[ ! -z "${local_dir}" ]]; then 
-        url="${local_dir}/${url#*://*/}";
+        url="${local_dir}/${url#*://*/}"
     fi
     downloader "${outfile}" "${url}"
 }
+
+
 export -f download_url  #export it to be accessible to the parallel call
 
 download_retry_md5(){ # parameter: ${1} url, ${2} output file, ${3} url MD5 (empty to skip), ${4} re-tries
@@ -358,21 +382,38 @@ filter_assembly_summary() # parameter: ${1} assembly_summary file, ${2} number o
     return 0;
 }
 
-filter_taxids_ncbi() # parameter: ${1} assembly_summary file, ${2} ncbi_tax file - return number of lines
-{
-    # Keep only selected taxid lineage, removing at the end duplicated entries from duplicates on taxids
-    tmp_lineage=$(tmp_file "lineage.tmp")
+# filter_taxids_ncbi() # parameter: ${1} assembly_summary file, ${2} ncbi_tax file - return number of lines
+# {
+#     # Keep only selected taxid lineage, removing at the end duplicated entries from duplicates on taxids
+#     tmp_lineage=$(tmp_file "lineage.tmp")
+#     for tx in ${taxids//,/ }; do
+#         txids_lin=$(grep "[^0-9]${tx}[^0-9]" "${2}" | cut -f 1) #get only taxids in the lineage section
+#         echolog " - $(count_lines "${txids_lin}") children taxids in the lineage of ${tx}" "0"
+#         echo "${txids_lin}" >> "${tmp_lineage}" 
+#     done
+#     lineage_taxids=$(sort ${tmp_lineage} | uniq | tr '\n' ',')${taxids} # put lineage back into the taxids variable with the provided taxids
+#     rm "${tmp_lineage}"
+
+#     # Join with assembly_summary based on taxid field 6
+#     join -1 6 -2 1 <(sort -k 6,6 "${1}") <(echo "${lineage_taxids//,/$'\n'}" | sort -k 1,1) -t$'\t' -o ${join_as_fields1} | sort | uniq > "${1}_taxids"
+#     mv "${1}_taxids" "${1}"
+#     count_lines_file "${1}"
+# }
+
+## ohickl: we only want the exact taxids, not the lineage
+filter_taxids_ncbi() { # parameter: ${1} assembly_summary file, ${2} ncbi_tax file - return number of lines
+    tmp_taxids=$(tmp_file "taxids.tmp")
+    
+    # Write the provided taxids directly to the temporary file
     for tx in ${taxids//,/ }; do
-        txids_lin=$(grep "[^0-9]${tx}[^0-9]" "${2}" | cut -f 1) #get only taxids in the lineage section
-        echolog " - $(count_lines "${txids_lin}") children taxids in the lineage of ${tx}" "0"
-        echo "${txids_lin}" >> "${tmp_lineage}" 
+        echo "${tx}" >> "${tmp_taxids}"
     done
-    lineage_taxids=$(sort ${tmp_lineage} | uniq | tr '\n' ',')${taxids} # put lineage back into the taxids variable with the provided taxids
-    rm "${tmp_lineage}"
 
     # Join with assembly_summary based on taxid field 6
-    join -1 6 -2 1 <(sort -k 6,6 "${1}") <(echo "${lineage_taxids//,/$'\n'}" | sort -k 1,1) -t$'\t' -o ${join_as_fields1} | sort | uniq > "${1}_taxids"
+    join -1 6 -2 1 <(sort -k 6,6 "${1}") <(sort -k 1,1 "${tmp_taxids}") -t$'\t' -o ${join_as_fields1} | sort | uniq > "${1}_taxids"
     mv "${1}_taxids" "${1}"
+    rm "${tmp_taxids}"
+    
     count_lines_file "${1}"
 }
 
